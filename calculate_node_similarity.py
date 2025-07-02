@@ -6,16 +6,7 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 def generate_node_features_from_texts(raw_texts, max_features=1000):
-    """
-    从原始文本生成节点特征
-    
-    Args:
-        raw_texts: 原始文本列表
-        max_features: 最大特征数量
-    
-    Returns:
-        torch.Tensor: 节点特征矩阵 [N x feature_dim]
-    """
+
     print("从文本生成节点特征...")
     
     # 使用TF-IDF向量化文本
@@ -26,51 +17,34 @@ def generate_node_features_from_texts(raw_texts, max_features=1000):
         ngram_range=(1, 2)
     )
     
-    # 将文本列表转换为TF-IDF特征矩阵
     features = vectorizer.fit_transform(raw_texts)
-    
-    # 转换为PyTorch张量
+
     node_features = torch.FloatTensor(features.toarray())
     
     print(f"  生成特征维度: {node_features.shape}")
     return node_features
 
 def compute_node_similarity(v0, v_target, node_features):
-    """
-    计算两个节点之间的余弦相似度
-    
-    Args:
-        v0: 锚点节点ID
-        v_target: 目标节点ID
-        node_features: 节点特征矩阵 [N x feature_dim]
-    
-    Returns:
-        float: 余弦相似度得分
-    """
+
     vec1 = node_features[v0].unsqueeze(0)  # [1 x feature_dim]
     vec2 = node_features[v_target].unsqueeze(0)  # [1 x feature_dim]
     return F.cosine_similarity(vec1, vec2).item()
 
 def calculate_similarity_for_dataset(dataset_name):
-    """
-    为指定数据集计算节点相似度
-    
-    Args:
-        dataset_name: 数据集名称 ('cora' 或 'citeseer')
-    """
+
     print(f"开始处理 {dataset_name} 数据集...")
     
-    # 文件路径
+
     data_file = f"datasets/{dataset_name}.pt"
     anchors_file = f"anchors/{dataset_name}_anchors.pt"
     hop_matrices_file = f"hop_matrices/hop_matrices_{dataset_name}.pt"
     
-    # 创建输出目录
+
     output_dir = Path("node_similarity")
     output_dir.mkdir(exist_ok=True)
     output_file = output_dir / f"node_similarity_{dataset_name}.pt"
     
-    # 检查文件是否存在
+
     if not os.path.exists(data_file):
         print(f"错误: 数据文件 {data_file} 不存在")
         return
@@ -81,7 +55,7 @@ def calculate_similarity_for_dataset(dataset_name):
         print(f"错误: 跳数矩阵文件 {hop_matrices_file} 不存在")
         return
     
-    # 加载数据
+
     print("加载数据...")
     data = torch.load(data_file, weights_only=False)
     anchors = torch.load(anchors_file, weights_only=False).tolist()
@@ -96,11 +70,11 @@ def calculate_similarity_for_dataset(dataset_name):
     print(f"  - 锚点数量: {len(anchors)}")
     print(f"  - 跳数矩阵形状: {next(iter(anchor_hop_matrices.values())).shape}")
     
-    # 获取最大跳数
+
     max_hop = len(next(iter(anchor_hop_matrices.values())))
     print(f"  - 最大跳数: {max_hop}")
     
-    # 计算相似度
+
     print("开始计算节点相似度...")
     similarity_dict = {}
     
@@ -120,11 +94,11 @@ def calculate_similarity_for_dataset(dataset_name):
         
         similarity_dict[anchor] = anchor_result
     
-    # 保存结果
+
     print(f"保存结果到 {output_file}...")
     torch.save(similarity_dict, output_file)
     
-    # 统计信息
+
     total_pairs = sum(len(pairs) for pairs in similarity_dict.values())
     print(f"计算完成!")
     print(f"  - 总相似度对数量: {total_pairs}")
@@ -137,10 +111,7 @@ def calculate_similarity_for_dataset(dataset_name):
         print(f"  锚点 {anchor}: {pairs}")
 
 def main():
-    """
-    主函数：为Cora和Citeseer数据集计算节点相似度
-    """
-    
+
     datasets = ['cora', 'citeseer']
     
     for dataset in datasets:

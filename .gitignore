@@ -2,3 +2,4 @@ anchors
 hop_matrices
 verify_hop_matrices.py
 node_similarity
+shortest_paths
