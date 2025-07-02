@@ -2,6 +2,38 @@ import torch
 import torch.nn.functional as F
 import os
 from pathlib import Path
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+def generate_node_features_from_texts(raw_texts, max_features=1000):
+    """
+    从原始文本生成节点特征
+    
+    Args:
+        raw_texts: 原始文本列表
+        max_features: 最大特征数量
+    
+    Returns:
+        torch.Tensor: 节点特征矩阵 [N x feature_dim]
+    """
+    print("从文本生成节点特征...")
+    
+    # 使用TF-IDF向量化文本
+    vectorizer = TfidfVectorizer(
+        max_features=max_features,
+        stop_words='english',
+        lowercase=True,
+        ngram_range=(1, 2)
+    )
+    
+    # 将文本列表转换为TF-IDF特征矩阵
+    features = vectorizer.fit_transform(raw_texts)
+    
+    # 转换为PyTorch张量
+    node_features = torch.FloatTensor(features.toarray())
+    
+    print(f"  生成特征维度: {node_features.shape}")
+    return node_features
 
 def compute_node_similarity(v0, v_target, node_features):
     """
@@ -55,9 +87,12 @@ def calculate_similarity_for_dataset(dataset_name):
     anchors = torch.load(anchors_file, weights_only=False).tolist()
     anchor_hop_matrices = torch.load(hop_matrices_file, weights_only=False)
     
+    # 从文本生成节点特征
+    node_features = generate_node_features_from_texts(data['raw_texts'])
+    
     print(f"数据集信息:")
-    print(f"  - 节点数量: {data.x.shape[0]}")
-    print(f"  - 特征维度: {data.x.shape[1]}")
+    print(f"  - 节点数量: {node_features.shape[0]}")
+    print(f"  - 特征维度: {node_features.shape[1]}")
     print(f"  - 锚点数量: {len(anchors)}")
     print(f"  - 跳数矩阵形状: {next(iter(anchor_hop_matrices.values())).shape}")
     
@@ -80,7 +115,7 @@ def calculate_similarity_for_dataset(dataset_name):
             target_nodes = torch.where(torch.tensor(hop_vec) == 1)[0].tolist()
             
             for target in target_nodes:
-                sim = compute_node_similarity(anchor, target, data.x)
+                sim = compute_node_similarity(anchor, target, node_features)
                 anchor_result.append((target, d + 1, sim))  # d+1 表示真实跳数
         
         similarity_dict[anchor] = anchor_result
@@ -105,8 +140,6 @@ def main():
     """
     主函数：为Cora和Citeseer数据集计算节点相似度
     """
-    print("=== 节点相似度计算脚本 ===")
-    print()
     
     datasets = ['cora', 'citeseer']
     
