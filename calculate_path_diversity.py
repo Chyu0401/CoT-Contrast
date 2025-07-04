@@ -1,9 +1,16 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 import os
 from typing import List, Dict, Tuple
 import logging
+import matplotlib.pyplot as plt
+import seaborn as sns
 
+# 设置中文字体和样式
+plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+sns.set_style("whitegrid")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -14,44 +21,26 @@ def path_diversity_score(path_nodes: List[int], similarity_matrix: np.ndarray) -
     if N <= 1:
         return 0.0  # 单节点路径多样性无意义
 
-    # 1. 提取路径节点对应的相似度子矩阵 (N x N)
-    # similarity_matrix[i,j] 是节点 i 和节点 j 的相似度
-    sub_sim = similarity_matrix[np.ix_(path_nodes, path_nodes)]  # 选中路径节点行列
+    sub_sim = similarity_matrix[np.ix_(path_nodes, path_nodes)]
+    
+    sim_tensor = torch.from_numpy(sub_sim).float()
+    sim_tensor.fill_diagonal_(0.0)
+    sim_tensor = torch.clamp(sim_tensor, min=0.0)
+    
+    # 归一化相似度：p'_ik = p_ik / sum p_ik
+    row_sums = sim_tensor.sum(dim=1, keepdim=True) + 1e-12
+    probs = sim_tensor / row_sums 
+    
+    # 熵计算：h_i = -sum_k p'_ik log(p'_ik)
+    entropy = -torch.sum(probs * torch.log(probs + 1e-12), dim=1) 
+    
+    max_entropy = torch.log(torch.tensor(N - 1.0, dtype=probs.dtype))
+    diversity_score = (max_entropy - entropy).mean().item()
 
-    # 2. 对角线（节点与自身）不参与熵计算，设为0
-    np.fill_diagonal(sub_sim, 0)
-
-    # 3. 对每一行（每个节点A），归一化得到概率分布 P_An
-    # 避免除以0，先求行和
-    row_sums = sub_sim.sum(axis=1, keepdims=True)
-    # 行和为0的行（孤立节点）暂时赋予均匀分布或跳过
-    zero_rows = (row_sums == 0).flatten()
-    P = np.zeros_like(sub_sim)
-    P[~zero_rows] = sub_sim[~zero_rows] / row_sums[~zero_rows]
-
-    # 4. 计算每个节点的熵 h_A = -sum P_An log P_An
-    log_P = np.where(P > 0, np.log(P), 0)
-    h = -np.sum(P * log_P, axis=1)  # shape: (N, )
-
-    # 对于零行（孤立节点），熵设为最大熵 log(N-1)
-    max_entropy = np.log(N - 1) if N > 1 else 0
-    h[zero_rows] = max_entropy
-
-    # 5. 计算路径多样性，平均"反熵"
-    diversity = np.mean(max_entropy - h)
-
-    return diversity
+    return diversity_score
 
 def load_shortest_paths(file_path: str) -> Dict[int, List[Tuple[int, List[int]]]]:
-    """
-    加载最短路径数据
-    
-    参数：
-    - file_path: str，最短路径文件路径
-    
-    返回：
-    - Dict[int, List[Tuple[int, List[int]]]]，锚点ID到(target_node, path)元组列表的映射
-    """
+
     logger.info(f"加载最短路径数据: {file_path}")
     shortest_paths = torch.load(file_path, weights_only=False)
     return shortest_paths
@@ -105,6 +94,134 @@ def calculate_path_diversity_matrix(shortest_paths: Dict[int, List[Tuple[int, Li
     
     return diversity_matrix, paths_with_diversity
 
+def visualize_diversity_distribution(diversity_matrix: np.ndarray, dataset_name: str, save_dir: str = "diversity_img"):
+    """
+    可视化多样性分数分布
+    
+    参数：
+    - diversity_matrix: np.ndarray，多样性分数矩阵
+    - dataset_name: str，数据集名称
+    - save_dir: str，保存目录
+    """
+    logger.info(f"生成多样性分数分布图: {dataset_name}")
+    
+    # 创建保存目录
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # 提取非零多样性分数
+    non_zero_scores = diversity_matrix[diversity_matrix > 0].flatten()
+    
+    if len(non_zero_scores) == 0:
+        logger.warning(f"数据集 {dataset_name} 没有有效的多样性分数")
+        return
+    
+    # 创建图形
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    fig.suptitle(f'{dataset_name} 数据集 - 路径多样性分数分布', fontsize=16, fontweight='bold')
+    
+    # 1. 直方图
+    axes[0, 0].hist(non_zero_scores, bins=50, alpha=0.7, color='skyblue', edgecolor='black')
+    axes[0, 0].set_title('多样性分数直方图')
+    axes[0, 0].set_xlabel('多样性分数')
+    axes[0, 0].set_ylabel('频次')
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # 2. 密度图
+    sns.kdeplot(data=non_zero_scores, ax=axes[0, 1], color='red', linewidth=2)
+    axes[0, 1].set_title('多样性分数密度分布')
+    axes[0, 1].set_xlabel('多样性分数')
+    axes[0, 1].set_ylabel('密度')
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # 3. 箱线图
+    axes[1, 0].boxplot(non_zero_scores, patch_artist=True, 
+                      boxprops=dict(facecolor='lightgreen', alpha=0.7))
+    axes[1, 0].set_title('多样性分数箱线图')
+    axes[1, 0].set_ylabel('多样性分数')
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # 4. 统计信息表格
+    stats_text = f"""
+统计信息:
+样本数量: {len(non_zero_scores):,}
+均值: {np.mean(non_zero_scores):.4f}
+标准差: {np.std(non_zero_scores):.4f}
+最小值: {np.min(non_zero_scores):.4f}
+最大值: {np.max(non_zero_scores):.4f}
+中位数: {np.median(non_zero_scores):.4f}
+25%分位数: {np.percentile(non_zero_scores, 25):.4f}
+75%分位数: {np.percentile(non_zero_scores, 75):.4f}
+    """
+    
+    axes[1, 1].text(0.1, 0.5, stats_text, transform=axes[1, 1].transAxes, 
+                   fontsize=12, verticalalignment='center',
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.8))
+    axes[1, 1].set_title('统计信息')
+    axes[1, 1].axis('off')
+    
+    plt.tight_layout()
+    
+    # 保存图片
+    save_path = os.path.join(save_dir, f"{dataset_name}_diversity_distribution.png")
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    logger.info(f"多样性分布图已保存: {save_path}")
+    
+    # 创建额外的详细分析图
+    create_detailed_analysis(non_zero_scores, dataset_name, save_dir)
+    
+    plt.close()
+
+def create_detailed_analysis(scores: np.ndarray, dataset_name: str, save_dir: str):
+    """
+    创建详细的多样性分数分析图
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    fig.suptitle(f'{dataset_name} 数据集 - 多样性分数详细分析', fontsize=16, fontweight='bold')
+    
+    # 1. 累积分布函数
+    sorted_scores = np.sort(scores)
+    cumulative_prob = np.arange(1, len(sorted_scores) + 1) / len(sorted_scores)
+    axes[0, 0].plot(sorted_scores, cumulative_prob, linewidth=2, color='blue')
+    axes[0, 0].set_title('累积分布函数 (CDF)')
+    axes[0, 0].set_xlabel('多样性分数')
+    axes[0, 0].set_ylabel('累积概率')
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # 2. Q-Q图（与正态分布比较）
+    from scipy import stats
+    stats.probplot(scores, dist="norm", plot=axes[0, 1])
+    axes[0, 1].set_title('Q-Q图 (与正态分布比较)')
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # 3. 分位数分布
+    percentiles = np.arange(1, 100)
+    quantiles = np.percentile(scores, percentiles)
+    axes[1, 0].plot(percentiles, quantiles, linewidth=2, color='green')
+    axes[1, 0].set_title('分位数分布')
+    axes[1, 0].set_xlabel('百分位数')
+    axes[1, 0].set_ylabel('多样性分数')
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # 4. 区间分布
+    bins = np.linspace(scores.min(), scores.max(), 20)
+    hist, bin_edges = np.histogram(scores, bins=bins)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    axes[1, 1].bar(bin_centers, hist, width=bin_edges[1]-bin_edges[0], 
+                  alpha=0.7, color='orange', edgecolor='black')
+    axes[1, 1].set_title('区间分布')
+    axes[1, 1].set_xlabel('多样性分数区间')
+    axes[1, 1].set_ylabel('频次')
+    axes[1, 1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # 保存图片
+    save_path = os.path.join(save_dir, f"{dataset_name}_diversity_analysis.png")
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    logger.info(f"详细分析图已保存: {save_path}")
+    
+    plt.close()
+
 def save_path_diversity_matrix(diversity_matrix: np.ndarray, 
                              paths_with_diversity: Dict[int, List[Tuple[int, List[int], float]]],
                              output_path: str, 
@@ -133,6 +250,9 @@ def save_path_diversity_matrix(diversity_matrix: np.ndarray,
                 f"标准差={np.std(diversity_matrix):.4f}, "
                 f"最小值={np.min(diversity_matrix):.4f}, "
                 f"最大值={np.max(diversity_matrix):.4f}")
+    
+    # 生成可视化图表
+    visualize_diversity_distribution(diversity_matrix, dataset_name)
 
 def process_dataset(dataset_name: str):
 

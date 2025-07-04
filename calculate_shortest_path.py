@@ -42,8 +42,8 @@ def create_networkx_graph(data):
     
     return G
 
-def load_anchors_and_hop_matrices(dataset_name):
-    print(f"加载锚点和跳数矩阵...")
+def load_anchors(dataset_name):
+    print(f"加载锚点...")
     
     anchors_path = f'anchors/{dataset_name}_anchors.pt'
     if os.path.exists(anchors_path):
@@ -53,18 +53,9 @@ def load_anchors_and_hop_matrices(dataset_name):
     else:
         raise FileNotFoundError(f"锚点文件不存在: {anchors_path}")
     
-    hop_matrices_path = f'hop_matrices/hop_matrices_{dataset_name}.pt'
-    if os.path.exists(hop_matrices_path):
-        anchor_hop_matrices = torch.load(hop_matrices_path, weights_only=False)
-        print(f"   - 跳数矩阵数量: {len(anchor_hop_matrices)}")
-        max_hop = len(next(iter(anchor_hop_matrices.values())))
-        print(f"   - 最大跳数: {max_hop}")
-    else:
-        raise FileNotFoundError(f"跳数矩阵文件不存在: {hop_matrices_path}")
-    
-    return anchors, anchor_hop_matrices, max_hop
+    return anchors
 
-def calculate_shortest_paths(G, anchors, anchor_hop_matrices, max_hop):
+def calculate_shortest_paths(G, anchors):
     print("开始计算最短路径...")
     
     all_paths = {}
@@ -74,14 +65,23 @@ def calculate_shortest_paths(G, anchors, anchor_hop_matrices, max_hop):
         print(f"处理锚点 {i+1}/{len(anchors)}: {anchor}")
         anchor_paths = []
         
-        for d in range(max_hop):
-            hop_vec = anchor_hop_matrices[anchor][d]
-            target_nodes = torch.where(torch.tensor(hop_vec) == 1)[0].tolist()
+        # 计算从锚点出发可达的所有节点
+        shortest_paths = nx.single_source_shortest_path_length(G, anchor)
+        
+        # 找到该锚点可达的最远距离
+        if shortest_paths:
+            max_distance = max(shortest_paths.values())
+            print(f"  锚点 {anchor} 可达的最远距离: {max_distance}跳")
+        else:
+            max_distance = 0
+            print(f"  锚点 {anchor} 没有可达节点")
+        
+        # 从距离2开始计算路径（跳过距离为1的节点）
+        for distance in range(2, max_distance + 1):
+            # 找到距离为distance的所有节点
+            target_nodes = [node for node, dist in shortest_paths.items() if dist == distance]
             
             for target in target_nodes:
-                if target == anchor:
-                    continue
-                    
                 try:
                     path = nx.shortest_path(G, source=anchor, target=target)
                     anchor_paths.append((target, path))
@@ -91,7 +91,7 @@ def calculate_shortest_paths(G, anchors, anchor_hop_matrices, max_hop):
                     continue
         
         all_paths[anchor] = anchor_paths
-        print(f"  锚点 {anchor} 完成，找到 {len(anchor_paths)} 条路径")
+        print(f"  锚点 {anchor} 完成，找到 {len(anchor_paths)} 条路径（距离2-{max_distance}跳）")
     
     print(f"最短路径计算完成，总共找到 {total_paths} 条路径")
     return all_paths
@@ -103,7 +103,7 @@ def save_paths(all_paths, dataset_name):
     
     torch_path = f'shortest_paths/{dataset_name}_shortest_paths.pt'
     torch.save(all_paths, torch_path)
-    print(f"   - 保存为torch格式: {torch_path}")
+    print(f"   - 保存为: {torch_path}")
     
     return torch_path
 
@@ -114,9 +114,13 @@ def analyze_paths(all_paths):
     total_paths = sum(len(paths) for paths in all_paths.values())
     
     path_lengths = []
+    distance_dist = defaultdict(int)  # 距离分布
+    
     for anchor_paths in all_paths.values():
         for target, path in anchor_paths:
-            path_lengths.append(len(path) - 1)
+            path_length = len(path) - 1
+            path_lengths.append(path_length)
+            distance_dist[path_length] += 1
     
     if path_lengths:
         avg_length = sum(path_lengths) / len(path_lengths)
@@ -129,18 +133,13 @@ def analyze_paths(all_paths):
         print(f"   - 最短路径长度: {min_length}")
         print(f"   - 最长路径长度: {max_length}")
         
-        length_dist = defaultdict(int)
-        for length in path_lengths:
-            length_dist[length] += 1
-        
         print("   - 路径长度分布:")
-        for length in sorted(length_dist.keys()):
-            print(f"     {length}跳: {length_dist[length]}条路径")
+        for length in sorted(distance_dist.keys()):
+            print(f"     {length}跳: {distance_dist[length]}条路径")
     else:
         print("   - 没有找到任何路径")
 
 def show_examples(all_paths, dataset_name):
-    """显示路径矩阵的示例格式"""
     print(f"\n{dataset_name} 数据集 - 路径矩阵示例:")
     print("=" * 60)
     
@@ -155,12 +154,24 @@ def show_examples(all_paths, dataset_name):
             break
             
         print(f"\n锚点 {anchor} 的路径:")
-        print(f"   找到 {len(anchor_paths)} 条路径")
+        print(f"   找到 {len(anchor_paths)} 条路径（距离2跳及以上）")
+        
+        # 按距离分组显示路径
+        distance_groups = defaultdict(list)
+        for target, path in anchor_paths:
+            distance = len(path) - 1
+            distance_groups[distance].append((target, path))
         
         # 显示前5条路径作为示例
-        for i, (target, path) in enumerate(anchor_paths[:5]):
-            path_length = len(path) - 1
-            print(f"   {i+1:2d}. 锚点{anchor} → 目标{target:3d}: {path} (长度: {path_length}跳)")
+        shown_count = 0
+        for distance in sorted(distance_groups.keys()):
+            if shown_count >= 5:
+                break
+            for target, path in distance_groups[distance]:
+                if shown_count >= 5:
+                    break
+                print(f"   {shown_count+1:2d}. 锚点{anchor} → 目标{target:3d}: {path} (距离: {distance}跳)")
+                shown_count += 1
         
         if len(anchor_paths) > 5:
             print(f"   ... 还有 {len(anchor_paths) - 5} 条路径")
@@ -176,7 +187,6 @@ def show_examples(all_paths, dataset_name):
     print(f"       ...")
     print(f"   }}")
     
-
     print(f"\n具体示例:")
     first_anchor = list(all_paths.keys())[0]
     if all_paths[first_anchor]:
@@ -200,27 +210,20 @@ def main():
         try:
             data = load_data(dataset_name)
             G = create_networkx_graph(data)
-            anchors, anchor_hop_matrices, max_hop = load_anchors_and_hop_matrices(dataset_name)
+            anchors = load_anchors(dataset_name)
             
-            start_time = time.time()
-            all_paths = calculate_shortest_paths(G, anchors, anchor_hop_matrices, max_hop)
-            end_time = time.time()
-            
-            print(f"计算耗时: {end_time - start_time:.2f}秒")
+            all_paths = calculate_shortest_paths(G, anchors)
             
             torch_path = save_paths(all_paths, dataset_name)
             analyze_paths(all_paths)
-            # show_examples(all_paths, dataset_name)
+            show_examples(all_paths, dataset_name)
             
             print(f"数据集 {dataset_name} 处理完成!")
             
         except Exception as e:
             print(f"处理数据集 {dataset_name} 时出错: {e}")
             continue
-    
-    print("\n" + "=" * 50)
-    print("第三阶段完成!")
-    print("=" * 50)
+
 
 if __name__ == "__main__":
     main() 

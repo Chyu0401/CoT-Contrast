@@ -4,4 +4,9 @@ verify_hop_matrices.py
 node_similarity
 shortest_paths
 path_diversity
-query_path_diversity.py
+graph_img
+embeddings
+diversity_img
+node_similarity2
+node_embedding.sh
+topK_path_diversity.py
