@@ -13,15 +13,12 @@ def load_anchors(anchors_path: str) -> List[int]:
 def load_graph_data(data_path: str) -> Tuple[nx.Graph, int]:
     data = torch.load(data_path)
     
-    # 从edge_index构建图
     edge_index = data['edge_index']
     num_nodes = edge_index.max().item() + 1
     
-    # 创建NetworkX图
     G = nx.Graph()
     G.add_nodes_from(range(num_nodes))
     
-    # 添加边
     edges = edge_index.t().numpy()
     G.add_edges_from(edges)
     

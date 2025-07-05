@@ -27,7 +27,7 @@ def generate_node_features_from_texts(raw_texts, model_name="intfloat/e5-large-v
     model = AutoModel.from_pretrained(model_name).to(device)
     model.eval()
 
-    # 确保文本是字符串格式
+
     if isinstance(raw_texts[0], torch.Tensor):
         texts = [text.item() if text.numel() == 1 else str(text.tolist()) for text in raw_texts]
     else:
@@ -119,15 +119,12 @@ def visualize_anchors_tsne(data_dict, anchors, dataset_name, figsize=(12, 10)):
     
     plt.tight_layout()
     
-    # 创建 graph_img 文件夹
     os.makedirs("graph_img", exist_ok=True)
     
-    # 保存图片到 graph_img 文件夹
     save_path = f"graph_img/{dataset_name}_anchors_tsne.png"
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     print(f"图片已保存到: {save_path}")
     
-    # 关闭图形以释放内存
     plt.close()
     
     return embeddings_2d, is_anchor

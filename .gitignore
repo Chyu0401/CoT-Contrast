@@ -10,3 +10,6 @@ diversity_img
 node_similarity2
 node_embedding.sh
 topK_path_diversity.py
+path_img
+path_selection
+node_similarities.py
