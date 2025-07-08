@@ -224,7 +224,7 @@ def visualize_paths_tsne(data_dict: Dict,
     logger.info(f"路径可视化图片已保存到: {save_path}")
     
     plt.close()
-    
+
     return embeddings_2d, node_types
 
 def process_dataset_path_visualization(dataset_name: str, num_samples: int = 5):
